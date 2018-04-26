@@ -3,16 +3,42 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <getopt.h>
 
 #define BUFFER_SIZE 128
 
-int main()
+int main(int argc, char *argv[])
 {
     int rv;
     struct termios orig_term_attrs;
     struct termios term_attrs;
     char buffer[BUFFER_SIZE];
     int running = 1;
+    static int shell = 0;
+    while(1) {
+        int option_index = 0;
+        static struct option long_options[] = {
+            {"shell", no_argument, &shell, 1},
+            {0, 0, 0, 0}
+        };
+
+       
+        rv = getopt_long(argc, argv, "", long_options, &option_index);
+        if (rv == -1) {
+            break;
+        }
+
+        switch (rv) {
+            case '?':
+                fprintf(stdout, "Unrecognizable argument!\n");
+                break;
+            case 0:
+                fprintf(stdout, "Recoginized shell argument %d!\n", shell);
+                break;
+            default:
+                break;
+        }
+    }
     
     rv = tcgetattr(STDIN_FILENO, &orig_term_attrs);
     if (rv == -1) {
@@ -34,6 +60,17 @@ int main()
         exit(1);
     }
     
+    if(shell) {
+        int child_pid = fork();
+        if(child_pid == -1) {
+            //TODO: handle error exception
+            exit(1);
+        } else if (child == 0) {
+            // In child process
+        } else {
+            // In Parent process
+        }   
+    }
     //Read keyboard characters
     while(running) {
         int bytes_rd = read(STDIN_FILENO, buffer, BUFFER_SIZE);
@@ -66,5 +103,10 @@ int main()
 
     // Reset termianl back to original settings
     tcsetattr(STDIN_FILENO, TCSANOW, &orig_term_attrs);
+    if (rv == -1) {
+        //TODO: handle error exception
+        exit(1);
+    }
+
     exit(0);
 }

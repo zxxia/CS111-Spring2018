@@ -5,6 +5,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #define BUFFER_SIZE 256
 int running = 1;
@@ -33,7 +34,7 @@ void child_process(int in_pipefd[2], int out_pipefd[2]) {
 
 }
 
-void process_char() {
+void process_char(int shell, int in_pipefd[2], int out_pipefd[2]) {
     //Read keyboard characters
     while(running) {
         int bytes_rd = read(STDIN_FILENO, buffer, BUFFER_SIZE);
@@ -53,6 +54,10 @@ void process_char() {
                 if (bytes_wrtn == -1) {
                     //TODO: handle error exception
                     exit(1);
+                }
+
+                if (shell) {
+                    bytes_wrtn
                 }
             } else {
                 int bytes_wrtn = write(STDOUT_FILENO, buffer+i, 1);

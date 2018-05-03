@@ -1,5 +1,5 @@
 lab1: main.c
-	gcc -o lab1a main.c -std=c11 -g -Wall -Werror -Wextra
+	gcc -o lab1a main.c -std=c11 -g -Wall -Werror -Wextra -Wformat
 clean:
 	rm lab1a
 check:

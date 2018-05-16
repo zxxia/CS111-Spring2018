@@ -1,4 +1,4 @@
-lab1: main.c
+lab1a: main.c
 	gcc -o lab1a main.c -std=c11 -g -Wall -Werror -Wextra -Wformat
 clean:
 	rm lab1a lab1a-123456789.tar.gz

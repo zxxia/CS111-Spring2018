@@ -13,9 +13,8 @@
 int running = 1;
 char buffer[BUFFER_SIZE];
 static int shell = 0;
-struct termios orig_term_attrs;
 
-void change_terminal_settings() {
+void change_terminal_settings(struct termios *orig_term_attrs) {
     int rv;
     struct termios term_attrs;
     rv = tcgetattr(STDIN_FILENO, orig_term_attrs);
@@ -39,7 +38,7 @@ void change_terminal_settings() {
     }
 }
 
-void restore_terminal_settings() {
+void restore_terminal_settings(struct termios *orig_term_attrs) {
     // Reset termianl back to original settings
     int rv;
     rv = tcsetattr(STDIN_FILENO, TCSANOW, orig_term_attrs);
@@ -49,24 +48,20 @@ void restore_terminal_settings() {
     }
 }
 
-void error_handler(char syscall_name[]) {
-    fprintf(stderr, "%s: %s\n.", syscall_name, strerror(errno));
-    restore_terminal_settings(orig_term_attrs);
-    exit(1);
-}
-
 void child_process() {
     // In child process
     int rv = execl("/bin/bash", "/bin/bash", (char*) NULL);
     if (rv == -1) {
-        error_handler("execl");
+        fprintf(stderr, "execl: %s\n.", strerror(errno));
+        exit(1);
     }
 }
 
 void write_char_to_fd(int fd, char ch) {
     int bytes_wrtn = write(fd, &ch, 1);
     if (bytes_wrtn == -1) {
-        error_handler("write");
+        fprintf(stderr, "write: %s\n.", strerror(errno));
+        exit(1);
     }
 }
 
@@ -139,6 +134,7 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd) {
 int main(int argc, char *argv[])
 {
     int rv;
+    struct termios orig_term_attrs;
     pid_t cpid;
     while(1) {
         int option_index = 0;
@@ -164,7 +160,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    change_terminal_settings();
+    change_terminal_settings(&orig_term_attrs);
 
     if(shell) {
         int p2c_pipefd[2];

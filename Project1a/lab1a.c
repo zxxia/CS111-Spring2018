@@ -1,15 +1,18 @@
+#define _POSIX_SOURCE
 #include <stdio.h>
 #include <termios.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <poll.h>
 #include <errno.h>
 
 #define BUFFER_SIZE 256
+
 int running = 1;
 char buffer[BUFFER_SIZE];
 static int shell = 0;
@@ -18,14 +21,14 @@ struct termios orig_term_attrs;
 void change_terminal_settings() {
     int rv;
     struct termios term_attrs;
-    rv = tcgetattr(STDIN_FILENO, orig_term_attrs);
+    rv = tcgetattr(STDIN_FILENO, &orig_term_attrs);
     if (rv == -1) {
         fprintf(stderr, "tcgetattr: %s\n.", strerror(errno));
         exit(1);
     }
 
     // Copy the original settings to a new struct
-    memcpy(&term_attrs, orig_term_attrs, sizeof(term_attrs));
+    memcpy(&term_attrs, &orig_term_attrs, sizeof(term_attrs));
     // Change terminal attribute settings
     term_attrs.c_iflag = ISTRIP; // only lower 7 bits
     term_attrs.c_oflag = 0; // no processing
@@ -42,7 +45,7 @@ void change_terminal_settings() {
 void restore_terminal_settings() {
     // Reset termianl back to original settings
     int rv;
-    rv = tcsetattr(STDIN_FILENO, TCSANOW, orig_term_attrs);
+    rv = tcsetattr(STDIN_FILENO, TCSANOW, &orig_term_attrs);
     if (rv == -1) {
         fprintf(stderr, "tcsetattr: %s\n.", strerror(errno));
         exit(1);
@@ -70,7 +73,7 @@ void write_char_to_fd(int fd, char ch) {
     }
 }
 
-void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd) {
+void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
     int rv;
     struct pollfd fds[2];
     fds[0].fd = STDIN_FILENO;
@@ -82,8 +85,7 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd) {
     while(running) {
         rv = poll(fds, 2, 0);
         if (rv == -1) { // An error occured when calling poll
-            fprintf(stderr, "poll: %s\n.", strerror(errno));
-            exit(1);
+            error_handler("poll");
         } else if (rv == 0){ // Timeout and no file descriptor is ready
             continue;
         }
@@ -94,16 +96,29 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd) {
                 // Read the data into buffer
                 int bytes_rd = read(fds[i].fd, buffer, BUFFER_SIZE);
                 if (bytes_rd == -1) {
-                    fprintf(stderr, "read: %s\n.", strerror(errno));
-                    exit(1);
+                    error_handler("read");
                 }
                 
                 // Check all characters read
                 for (int j = 0; j < bytes_rd; j++) {
                     if (buffer[j] == 0x04 && i == 0) {
                         // EOT from keyboard
+                        // Wirte ^D to stdout
+                        char ctrl_D[2] = {'^', 'D'};
+                        write_char_to_fd(STDOUT_FILENO, ctrl_D[0]);
+                        write_char_to_fd(STDOUT_FILENO, ctrl_D[1]);
                         close(p2c_pipefd_wr);
                         break;
+                    } else if (buffer[j] == 0x03 && i== 0) {
+                        // Write ^C to stdout
+                        char ctrl_C[2] = {'^', 'C'};
+                        write_char_to_fd(STDOUT_FILENO, ctrl_C[0]);
+                        write_char_to_fd(STDOUT_FILENO, ctrl_C[1]);
+                        // Kill shell
+                        rv = kill(cpid, SIGINT);
+                        if (rv < 0) {
+                            error_handler("kill");
+                        }
                     } else if (buffer[j] == 0x0D || buffer[j] == 0x0A) {
                         // Newline from either keyboard or shell
                         
@@ -128,11 +143,11 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd) {
             }
         }
 
-        if (fds[1].revents & (POLLHUP | POLLERR) && !(fds[1].revents & POLLIN)) {
+        if (fds[1].revents & (POLLHUP | POLLERR)
+            && !(fds[1].revents & POLLIN)) {
             // The shell already closed the pipe.
-            fprintf(stderr, "Shell closed the pipe./n");
             running = 0;
-        }   
+        }
     }
 }
 
@@ -140,6 +155,8 @@ int main(int argc, char *argv[])
 {
     int rv;
     pid_t cpid;
+
+    change_terminal_settings();
     while(1) {
         int option_index = 0;
         static struct option long_options[] = {
@@ -154,9 +171,8 @@ int main(int argc, char *argv[])
 
         switch (rv) {
             case '?':
-                fprintf(stderr, "getopt: %s\n", strerror(errno));
+                restore_terminal_settings(); 
                 exit(1);
-                break;
             case 0:
                 break;
             default:
@@ -164,7 +180,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    change_terminal_settings();
 
     if(shell) {
         int p2c_pipefd[2];
@@ -172,19 +187,16 @@ int main(int argc, char *argv[])
 
         rv = pipe(p2c_pipefd);
         if (rv == -1) {
-            fprintf(stderr, "pipe: %s\n.", strerror(errno));
-            exit(1);
+            error_handler("pipe");
         }
         rv = pipe(c2p_pipefd);
         if (rv == -1) {
-            fprintf(stderr, "pipe: %s\n.", strerror(errno));
-            exit(1);
+            error_handler("pipe");
         }
 
         cpid = fork();
         if(cpid == -1) {
-            fprintf(stderr, "fork: %s\n.", strerror(errno));
-            exit(1);
+            error_handler("fork");
         } else if (cpid == 0) {
             // Child Process
             close(c2p_pipefd[0]); // Close unused read end at c2p pipe
@@ -204,7 +216,7 @@ int main(int argc, char *argv[])
             // In Parent process
             close(p2c_pipefd[0]); // Close unused read end at out pipe
             close(c2p_pipefd[1]); // Close unused write end at in pipe
-            transfer_char(p2c_pipefd[1], c2p_pipefd[0]);
+            transfer_char(p2c_pipefd[1], c2p_pipefd[0], cpid);
             int exit_status;
             rv = waitpid(cpid, &exit_status, 0);
             fprintf(stdout,

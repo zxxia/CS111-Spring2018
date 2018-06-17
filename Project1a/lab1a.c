@@ -73,17 +73,20 @@ void write_char_to_fd(int fd, char ch) {
     }
 }
 
-void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
+void comm(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
     int rv;
-    struct pollfd fds[2];
+    int fd_num = shell + 1;
+
+    struct pollfd fds[fd_num];
     fds[0].fd = STDIN_FILENO;
     fds[0].events = POLLIN | POLLHUP | POLLERR;
-
-    fds[1].fd = c2p_pipefd_rd;
-    fds[1].events = POLLIN | POLLHUP | POLLERR;
+    if (shell) {
+        fds[1].fd = c2p_pipefd_rd;
+        fds[1].events = POLLIN | POLLHUP | POLLERR;
+    }
 
     while(running) {
-        rv = poll(fds, 2, 0);
+        rv = poll(fds, fd_num, 0);
         if (rv == -1) { // An error occured when calling poll
             error_handler("poll");
         } else if (rv == 0){ // Timeout and no file descriptor is ready
@@ -91,7 +94,7 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
         }
 
         // At least one file descriptor is ready
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < fd_num; i++) {
             if (fds[i].revents & POLLIN) { // Data is ready at fd
                 // Read the data into buffer
                 int bytes_rd = read(fds[i].fd, buffer, BUFFER_SIZE);
@@ -107,17 +110,22 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
                         char ctrl_D[2] = {'^', 'D'};
                         write_char_to_fd(STDOUT_FILENO, ctrl_D[0]);
                         write_char_to_fd(STDOUT_FILENO, ctrl_D[1]);
-                        close(p2c_pipefd_wr);
-                        break;
+                        if (shell) {
+                            close(p2c_pipefd_wr);
+                            break;
+                        }
+                        return;
                     } else if (buffer[j] == 0x03 && i== 0) {
                         // Write ^C to stdout
                         char ctrl_C[2] = {'^', 'C'};
                         write_char_to_fd(STDOUT_FILENO, ctrl_C[0]);
                         write_char_to_fd(STDOUT_FILENO, ctrl_C[1]);
                         // Kill shell
-                        rv = kill(cpid, SIGINT);
-                        if (rv < 0) {
-                            error_handler("kill");
+                        if (shell) {
+                            rv = kill(cpid, SIGINT);
+                            if (rv < 0) {
+                                error_handler("kill");
+                            }
                         }
                     } else if (buffer[j] == 0x0D || buffer[j] == 0x0A) {
                         // Newline from either keyboard or shell
@@ -127,14 +135,14 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
                         write_char_to_fd(STDOUT_FILENO, newln[0]);
                         write_char_to_fd(STDOUT_FILENO, newln[1]);
 
-                        if (i == 0) {
+                        if (shell && i == 0) {
                             // Map newline from keyboard to shell
                             write_char_to_fd(p2c_pipefd_wr, newln[1]);
                         }
                     } else {
                         // Map char from either keyboard or shell to stdout
                         write_char_to_fd(STDOUT_FILENO, buffer[j]);
-                        if (i == 0) {
+                        if (shell && i == 0) {
                             // Map char from keyboard to shell
                             write_char_to_fd(p2c_pipefd_wr, buffer[j]);
                         }
@@ -143,7 +151,7 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
             }
         }
 
-        if (fds[1].revents & (POLLHUP | POLLERR)
+        if (shell && fds[1].revents & (POLLHUP | POLLERR)
             && !(fds[1].revents & POLLIN)) {
             // The shell already closed the pipe.
             running = 0;
@@ -151,6 +159,8 @@ void transfer_char(int p2c_pipefd_wr, int c2p_pipefd_rd, pid_t cpid) {
     }
 }
 
+
+ 
 int main(int argc, char *argv[])
 {
     int rv;
@@ -216,7 +226,7 @@ int main(int argc, char *argv[])
             // In Parent process
             close(p2c_pipefd[0]); // Close unused read end at out pipe
             close(c2p_pipefd[1]); // Close unused write end at in pipe
-            transfer_char(p2c_pipefd[1], c2p_pipefd[0], cpid);
+            comm(p2c_pipefd[1], c2p_pipefd[0], cpid);
             int exit_status;
             rv = waitpid(cpid, &exit_status, 0);
             fprintf(stdout,
@@ -225,7 +235,7 @@ int main(int argc, char *argv[])
                     WEXITSTATUS(exit_status));
         }   
     } else { // No need to run shell
-        //process_char();
+        comm(-1, -1, 1);
     }
 
     restore_terminal_settings(&orig_term_attrs);

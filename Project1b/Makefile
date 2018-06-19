@@ -1,7 +1,9 @@
+CC=gcc
+CFLAGS= -g -Wall -Werror -Wextra -Wformat
 lab1b-client: lab1b-client.c
-	gcc -o lab1b-client lab1b-client.c -std=c11 -g -Wall -Werror -Wextra -Wformat
+	$(CC) -o $@ lab1b-client.c $(CFLAGS) 
 lab1b-server: lab1b-server.c
-	gcc -o lab1b-client lab1b-server.c -std=c11 -g -Wall -Werror -Wextra -Wformat
+	$(CC) -o $@ lab1b-server.c $(CFLAGS) 
 clean:
 	rm lab1b-client lab1b-server lab1b-123456789.tar.gz
 check:
